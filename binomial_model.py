@@ -7,8 +7,9 @@ Cox-Ross-Rubinstein binomial trees.
 from __future__ import annotations
 
 import math
+import random
 from dataclasses import dataclass
-from typing import Literal
+from typing import Callable, Literal, Sequence
 
 OptionType = Literal["call", "put"]
 
@@ -56,6 +57,68 @@ def _payoff(price: float, strike: float, option_type: OptionType) -> float:
     return max(strike - price, 0.0)
 
 
+def monte_carlo_price(
+    *,
+    spot: float,
+    rate: float,
+    volatility: float,
+    maturity: float,
+    steps: int,
+    paths: int,
+    payoff_fn: Callable[[Sequence[float]], float],
+    seed: int | None = None,
+) -> float:
+    """Price an option via Monte Carlo simulation with a custom payoff.
+
+    The payoff function receives the full simulated price path (including the
+    initial spot) so path-dependent options can be priced without additional
+    scaffolding.
+
+    Args:
+        spot: Current asset price (> 0).
+        rate: Risk-free rate.
+        volatility: Asset volatility (>= 0).
+        maturity: Time to maturity in years (> 0).
+        steps: Number of time steps per path (> 0).
+        paths: Number of simulated paths (> 0).
+        payoff_fn: Callable that accepts a price path and returns its payoff.
+        seed: Optional random seed for reproducibility.
+
+    Returns:
+        Present value estimated from the simulated payoffs.
+    """
+
+    if spot <= 0:
+        raise ValueError("spot must be positive")
+    if maturity <= 0:
+        raise ValueError("maturity must be positive")
+    if steps <= 0:
+        raise ValueError("steps must be positive")
+    if paths <= 0:
+        raise ValueError("paths must be positive")
+    if volatility < 0:
+        raise ValueError("volatility cannot be negative")
+
+    rnd = random.Random(seed)
+    dt = maturity / steps
+    drift = (rate - 0.5 * volatility * volatility) * dt
+    diffusion_scale = volatility * math.sqrt(dt)
+    discount = math.exp(-rate * maturity)
+
+    payoff_sum = 0.0
+    for _ in range(paths):
+        price = spot
+        path: list[float] = [price]
+        for _ in range(steps):
+            shock = rnd.gauss(0.0, 1.0)
+            price *= math.exp(drift + diffusion_scale * shock)
+            path.append(price)
+        payoff_sum += payoff_fn(path)
+
+    average_payoff = payoff_sum / paths
+    return discount * average_payoff
+
+
 def price_option(spec: OptionSpec) -> float:
     """Price an option using a Cox-Ross-Rubinstein binomial tree.
 
@@ -86,4 +149,4 @@ def price_option(spec: OptionSpec) -> float:
     return payoffs[0]
 
 
-__all__ = ["OptionSpec", "price_option"]
+__all__ = ["OptionSpec", "price_option", "monte_carlo_price"]
